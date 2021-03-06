@@ -4,9 +4,9 @@ import requests
 import logging
 import os
 
-startUrl = "https://reset.inso.tuwien.ac.at/ase/assignment/{studentId}/token"
-testcaseUrl = "https://reset.inso.tuwien.ac.at/ase/assignment/{studentId}/stage/{stage}/testcase/{testcase}?token={token}"
-pdfUrl = "https://reset.inso.tuwien.ac.at/ase/assignment/{studentId}/stage/{stage}/pdf?token={token}"
+startUrlTemplate = "https://reset.inso.tuwien.ac.at/ase/assignment/{studentId}/token"
+testcaseUrlTemplate = "https://reset.inso.tuwien.ac.at/ase/assignment/{studentId}/stage/{stage}/testcase/{testcase}?token={token}"
+pdfUrlTemplate = "https://reset.inso.tuwien.ac.at/ase/assignment/{studentId}/stage/{stage}/pdf?token={token}"
 
 class StageSolver:
 
@@ -20,76 +20,88 @@ class StageSolver:
         self.stage = 1
         self.testcase = 1
 
-        self.tokens = []
         self.currentToken = None
-        self.initialTokenUrl = startUrl.format(studentId=self.studentId)
+        self.linkToNextTask = None
+        self.initialTokenUrl = startUrlTemplate.format(studentId=self.studentId)
+
+        self.session = requests.Session()
     
     # Download assignemnt for first stage
-    def getInitialAssignment():
+    def getInitialAssignment(self):
         logging.info("downloading initial assignment / stage {}".format(self.stage))
         self.currentToken = self.__getToken()
-        self.__getAssignment()
-    
+        self.__getAssignment(self.studentId, self.stage, self.currentToken)
+        
     # steps are performed in a loop
     #   get token
     #   get pdf
     #   solve stage (get testcase, solve, repeat)
     #   get next token
     def run(self):
+        self.stage = 1
+        self.testcase = 1
         self.currentToken = self.__getToken()
+        self.linkToNextTask = self.__testcaseUrl(self.studentId, self.stage, self.testcase, self.currentToken)
 
         for stageImpl in self.stageImplementations:
             logging.info("starting stage {}".format(self.stage))
-            self.__getAssignment()
             try:
-                stageResult = self.__solveStage(stageImpl)
+                (nextStageUrl, nextToken) = self.__solveStage(stageImpl, self.linkToNextTask)
 
-                if not stageResult:
-                    # did not solve stage
+                if not nextStageUrl:
                     logging.info("stage failed")
                     return
-                
-                self.currentToken = stageResult
             except Exception as ex:
                 logging.error("something went wrong - stopping")
                 logging.error(ex)
                 return
             
-            logging.info("stage {} cleared!".format(self.stage))
+            self.linkToNextTask = nextStageUrl
+            self.currentToken = nextToken
+            self.stage = self.stage+1
 
-        return self.currentToken
+            logging.info("stage {} cleared! Next url: {}".format(self.stage, self.linkToNextTask))
+            self.__getAssignment(self.studentId, self.stage, self.currentToken)
+
+        logging.info("all implemented stages ({}) solved".format(len(self.stageImplementations)))
+    
 
     # get testcase
     # solve
     # parse response - return or repeat
-    def __solveStage(self, solver):
+    def __solveStage(self, solver, startUrl):
         if not isinstance(solver, Stage):
             raise TypeError("given stage solutions not of type Stage")
         
         solver: Stage = solver
+        url = startUrl
+        testcaseNo = 1
+
         while True:
-            logging.debug("testcase {}".format(self.testcase))
-            testcase = self.__getTestcase()
+            testcase = self.__getTestcase(url)
+            logging.info("testcase {}: {}".format(testcaseNo, testcase))
             answer = solver.solveTask(testcase)
-            logging.debug("answer: {}".format(answer))
-            response = self.__postAnswer(answer)
+            logging.info("answer: {}".format(answer))
+            response = self.__postAnswer(url, answer)
 
             if response.status_code == 202:
                 # next testcase or next stage
-                logging.debug("testcase solved: {}".format(response.text))
-                (s,tc,to) = self.__parseResponse(response)
+                logging.info("testcase solved")
+                logging.debug("response: {}".format(response.text))
+
+                (s,tc,to, nextUrl) = self.__parseResponse(response)
+                url = nextUrl
                 logging.debug("s: {}, tc: {}, to: {}".format(s,tc,to))
+
                 if int(s) == self.stage:
-                    self.testcase = int(tc)
-                    self.currentToken = to
+                    testcase = int(tc)
                 else:
-                    # next stage - reset testcase
-                    self.testcase =1
-                    return to
+                    # stage finished, return url and token for next stage
+                    return (url, to)
 
             else:
                 logging.error("testcase {} failed: {}".format(testcase, response.text))
-                return False
+                return (False, False)
         
 
     #parses stage, testcase and token from success URL
@@ -106,35 +118,35 @@ class StageSolver:
         else:
             logging.error("something went wrong, no token in valid response")
         
-        logging.debug("parsed path: {}".format(path))
         if len(path) > 3:
             nextTestcase = path[-1]
             nextStage = path[-3]
 
-        return (nextStage, nextTestcase, nextToken) 
+        return (nextStage, nextTestcase, nextToken, linkToNextTask) 
 
     # get testcase
-    def __getTestcase(self):
-        logging.debug("GET testcase {}".format(self.__testcaseUrl()))
-        r = requests.get(self.__testcaseUrl())
+    def __getTestcase(self, url):
+        logging.debug("GET testcase {}".format(url))
+        r = self.session.get(url)
         res = r.json()
         logging.debug(res)
         return res
     
     #submit answer
-    def __postAnswer(self, answer):
-        logging.debug("POST answer {} for testcase {}".format(answer, self.testcase))
+    def __postAnswer(self, url, answer):
+        logging.debug("POST answer {}".format(answer))
 
-        r = requests.post(self.__testcaseUrl(), json=answer)
+        r = self.session.post(url, json=answer)
         logging.debug("HTTP {} - {}: {}".format(r.status_code, r.reason, r.text))
         return r
 
     # queries current assignment document and saves it
-    def __getAssignment(self):
-        logging.debug("GET assignment pdf {}".format(self.__pdfUrl()))
+    def __getAssignment(self, studentId, stage, token):
+        logging.info("Downloading assignment for stage {}".format(stage))
+        logging.debug("GET {}".format(self.__pdfUrl(studentId, stage, token)))
 
-        r = requests.get(self.__pdfUrl())
-        dest = os.path.join(self.outdir, "assignment{}.pdf".format(self.stage))
+        r = self.session.get(self.__pdfUrl(studentId, stage, token))
+        dest = os.path.join(self.outdir, "assignment{}.pdf".format(stage))
         with open(dest, "wb") as f:
             f.write(r.content)
 
@@ -143,21 +155,21 @@ class StageSolver:
     # GETs initial token
     def __getToken(self):
         logging.debug("GET initial token")
-        r = requests.get(startUrl.format(studentId=self.studentId))
+        r = self.session.get(startUrlTemplate.format(studentId=self.studentId))
         res = r.json()
         logging.debug(res)
         return res['token']
 
-    def __testcaseUrl(self):
-        return testcaseUrl.format(stage=self.stage, studentId=self.studentId, testcase=self.testcase, token=self.currentToken)
+    def __testcaseUrl(self, studentId, stage, testcase, token):
+        return testcaseUrlTemplate.format(stage=stage, studentId=studentId, testcase=testcase, token=token)
     
-    def __pdfUrl(self):
-        return pdfUrl.format(stage=self.stage, studentId=self.studentId, token=self.currentToken)
+    def __pdfUrl(self, studentId, stage, token):
+        return pdfUrlTemplate.format(stage=stage, studentId=studentId, token=token)
 
 
     
 class Stage(ABC):
     
     @abstractmethod
-    def solveTask(testcase):
+    def solveTask(testcase: dict):
         pass

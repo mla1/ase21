@@ -18,8 +18,9 @@ def main(studentId, outdir, onlyFetchInitialTask):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parser.add_argument("studentId", help="Your student ID")
     parser.add_argument("--init", help="Retrieves the first task description", action='store_true')
-    parser.add_argument("-m", "--studentId", required=True, help="Your student ID")
+    parser.add_argument("--debug", help="better logging", action='store_true')
 
     args = parser.parse_args()
 
@@ -28,5 +29,5 @@ if __name__ == "__main__":
         os.makedirs(outdir)
 
     #logging.basicConfig(filename=outdir + "/log", format='%(asctime)s %(levelname)s: %(message)s')
-    logging.basicConfig(format='%(asctime)s %(levelname)s: %(message)s', level=logging.DEBUG)
+    logging.basicConfig(format='%(asctime)s %(levelname)s: %(message)s', level=logging.DEBUG if args.debug else logging.INFO)
     main(args.studentId, outdir, args.init)
