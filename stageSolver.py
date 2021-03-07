@@ -10,27 +10,28 @@ pdfUrlTemplate = "https://reset.inso.tuwien.ac.at/ase/assignment/{studentId}/sta
 
 class StageSolver:
 
-    def __init__(self, sutdentId, stageImplementations=[], outdir="out"):
+    def __init__(self, sutdentId, stageImplementations=[], outdir="out", startStage = 1, token=None):
         if not sutdentId:
             raise ValueError("sutdentId")
 
         self.studentId = sutdentId
         self.stageImplementations = stageImplementations
         self.outdir = outdir
-        self.stage = 1
         self.testcase = 1
 
-        self.currentToken = None
+        self.startStage = 1 if startStage is None else startStage
+        self.startToken = token
         self.linkToNextTask = None
         self.initialTokenUrl = startUrlTemplate.format(studentId=self.studentId)
 
         self.session = requests.Session()
     
+
     # Download assignemnt for first stage
     def getInitialAssignment(self):
-        logging.info("downloading initial assignment / stage {}".format(self.stage))
-        self.currentToken = self.__getToken()
-        self.__getAssignment(self.studentId, self.stage, self.currentToken)
+        logging.info("downloading initial assignment / stage {}".format(1))
+        currentToken = self.__getToken()
+        self.__getAssignment(self.studentId, 1, currentToken)
         
     # steps are performed in a loop
     #   get token
@@ -38,15 +39,15 @@ class StageSolver:
     #   solve stage (get testcase, solve, repeat)
     #   get next token
     def run(self):
-        self.stage = 1
         self.testcase = 1
-        self.currentToken = self.__getToken()
-        self.linkToNextTask = self.__testcaseUrl(self.studentId, self.stage, self.testcase, self.currentToken)
+        stage = self.startStage
+        currentToken = self.__getToken() if self.startToken is None else self.startToken
+        self.linkToNextTask = self.__testcaseUrl(self.studentId, stage, self.testcase, currentToken)
 
-        for stageImpl in self.stageImplementations:
-            logging.info("starting stage {}".format(self.stage))
+        for stageImpl in self.stageImplementations[stage-1:]:
+            logging.info("starting stage {}".format(stage))
             try:
-                (nextStageUrl, nextToken) = self.__solveStage(stageImpl, self.linkToNextTask)
+                (nextStageUrl, nextToken) = self.__solveStage(stageImpl, stage, self.linkToNextTask)
 
                 if not nextStageUrl:
                     logging.info("stage failed")
@@ -57,11 +58,16 @@ class StageSolver:
                 return
             
             self.linkToNextTask = nextStageUrl
-            self.currentToken = nextToken
-            self.stage = self.stage+1
+            currentToken = nextToken
+            stage = stage+1
 
-            logging.info("stage {} cleared! Next url: {}".format(self.stage, self.linkToNextTask))
-            self.__getAssignment(self.studentId, self.stage, self.currentToken)
+            if 'finished' in self.linkToNextTask:
+                logging.info("!!!!!!!!! ALL STAGES SOLVED !!!!!!!!!\nFINAL URL: {}\nFINAL TOKEN:{}".format(self.linkToNextTask, currentToken))
+                break
+                
+            logging.info("Stage {} cleared !!\n{border}\nNext url: {}\nNext Token: {}\n{border}".format(stage-1, self.linkToNextTask, currentToken, border="#"*30))
+
+            self.__getAssignment(self.studentId, stage, currentToken)
 
         logging.info("all implemented stages ({}) solved".format(len(self.stageImplementations)))
     
@@ -69,7 +75,7 @@ class StageSolver:
     # get testcase
     # solve
     # parse response - return or repeat
-    def __solveStage(self, solver, startUrl):
+    def __solveStage(self, solver, stageNo, startUrl):
         if not isinstance(solver, Stage):
             raise TypeError("given stage solutions not of type Stage")
         
@@ -90,15 +96,14 @@ class StageSolver:
                 logging.debug("response: {}".format(response.text))
 
                 (s,tc,to, nextUrl) = self.__parseResponse(response)
+                
                 url = nextUrl
+                testcaseNo = int(tc)
                 logging.debug("s: {}, tc: {}, to: {}".format(s,tc,to))
 
-                if int(s) == self.stage:
-                    testcase = int(tc)
-                else:
+                if int(s) > stageNo or (s == -1 and tc == -1):
                     # stage finished, return url and token for next stage
                     return (url, to)
-
             else:
                 logging.error("testcase {} failed: {}".format(testcase, response.text))
                 return (False, False)
@@ -122,6 +127,10 @@ class StageSolver:
             nextTestcase = path[-1]
             nextStage = path[-3]
 
+        if 'finished' in path:
+            logging.debug("!!!!!!!!! ALL STAGES SOLVED !!!!!!!!!\nFINAL URL: {}\nFINAL TOKEN:{}".format(linkToNextTask,nextToken))
+            return (-1, -1, nextToken, linkToNextTask)
+        
         return (nextStage, nextTestcase, nextToken, linkToNextTask) 
 
     # get testcase
