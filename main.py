@@ -2,13 +2,13 @@ import logging
 import argparse
 import os
 from stageSolver import StageSolver
-from stages.example_exercise import *
-# from stages.individual import * 
+#from stages.example_exercise import *
+from stages.individual import * 
 
 def main(studentId, outdir, onlyFetchInitialTask, continueStage, token):
     stages = [Stage01(), Stage02(), Stage03(), Stage04()] # TODO: implement and pass stages to solver
     
-    if len(stages) < 1 or (continueStage is not None and len(stages) < continueStage):
+    if not onlyFetchInitialTask and len(stages) < 1 or (continueStage is not None and len(stages) < continueStage):
         logging.error("NO OR TOO FEW STAGE IMPLEMENTATIONS GIVEN! Provide stage solutions in stages array")
         return
 

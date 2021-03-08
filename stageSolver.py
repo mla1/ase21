@@ -4,9 +4,9 @@ import requests
 import logging
 import os
 
-startUrlTemplate = "https://reset.inso.tuwien.ac.at/ase/assignment/{studentId}/token"
-testcaseUrlTemplate = "https://reset.inso.tuwien.ac.at/ase/assignment/{studentId}/stage/{stage}/testcase/{testcase}?token={token}"
-pdfUrlTemplate = "https://reset.inso.tuwien.ac.at/ase/assignment/{studentId}/stage/{stage}/pdf?token={token}"
+startUrlTemplate = "https://reset.inso.tuwien.ac.at/asetest/assignment/{studentId}/token"
+testcaseUrlTemplate = "https://reset.inso.tuwien.ac.at/asetest/assignment/{studentId}/stage/{stage}/testcase/{testcase}?token={token}"
+pdfUrlTemplate = "https://reset.inso.tuwien.ac.at/asetest/assignment/{studentId}/stage/{stage}/pdf?token={token}"
 
 class StageSolver:
 
